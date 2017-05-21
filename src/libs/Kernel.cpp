@@ -199,8 +199,8 @@ std::string Kernel::get_query_string()
         n= snprintf(buf, sizeof(buf), "%1.4f,%1.4f,%1.4f", robot->from_millimeters(std::get<X_AXIS>(pos)), robot->from_millimeters(std::get<Y_AXIS>(pos)), robot->from_millimeters(std::get<Z_AXIS>(pos)));
         str.append("WPos:").append(buf, n);
         n= snprintf(buf, sizeof(buf), "%1.4f,%1.4f",THEROBOT->from_millimeters(THEROBOT->get_feed_rate()),THEROBOT->from_millimeters(THEKERNEL->conveyor->get_current_feedrate()*60.0F));
-        str.append("><Feed:").append(buf, n);
-        str.append(">\r\n");
+        str.append(">[Feed:").append(buf, n);
+        str.append("]\r\n");
 
     }else{
         // return the last milestone if idle
@@ -215,8 +215,8 @@ std::string Kernel::get_query_string()
         n= snprintf(buf, sizeof(buf), "%1.4f,%1.4f,%1.4f", robot->from_millimeters(std::get<X_AXIS>(pos)), robot->from_millimeters(std::get<Y_AXIS>(pos)), robot->from_millimeters(std::get<Z_AXIS>(pos)));
         str.append("WPos:").append(buf, n);
         n= snprintf(buf, sizeof(buf), "%1.4f,%1.4f",THEROBOT->from_millimeters(THEROBOT->get_feed_rate()),THEROBOT->from_millimeters(THEKERNEL->conveyor->get_current_feedrate()*60.0F));
-        str.append("><Feed:").append(buf, n);
-        str.append(">\r\n");
+        str.append(">[Feed:").append(buf, n);
+        str.append("]\r\n");
 
     }
     return str;
