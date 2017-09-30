@@ -41,7 +41,9 @@
 #define return_feedrate_checksum CHECKSUM("return_feedrate")
 #define probe_height_checksum    CHECKSUM("probe_height")
 #define gamma_max_checksum       CHECKSUM("gamma_max")
+#define max_z_checksum           CHECKSUM("max_z")
 #define reverse_z_direction_checksum CHECKSUM("reverse_z")
+#define dwell_before_probing_checksum CHECKSUM("dwell_before_probing")
 
 // from endstop section
 #define delta_homing_checksum    CHECKSUM("delta_homing")
@@ -138,7 +140,12 @@ void ZProbe::config_load()
     this->fast_feedrate = THEKERNEL->config->value(zprobe_checksum, fast_feedrate_checksum)->by_default(100)->as_number(); // feedrate in mm/sec
     this->return_feedrate = THEKERNEL->config->value(zprobe_checksum, return_feedrate_checksum)->by_default(0)->as_number(); // feedrate in mm/sec
     this->reverse_z     = THEKERNEL->config->value(zprobe_checksum, reverse_z_direction_checksum)->by_default(false)->as_bool(); // Z probe moves in reverse direction
-    this->max_z         = THEKERNEL->config->value(gamma_max_checksum)->by_default(500)->as_number(); // maximum zprobe distance
+    this->max_z         = THEKERNEL->config->value(zprobe_checksum, max_z_checksum)->by_default(NAN)->as_number(); // maximum zprobe distance
+    if(isnan(this->max_z)){
+        this->max_z = THEKERNEL->config->value(gamma_max_checksum)->by_default(200)->as_number(); // maximum zprobe distance
+    }
+    this->dwell_before_probing = THEKERNEL->config->value(zprobe_checksum, dwell_before_probing_checksum)->by_default(0)->as_number(); // dwell time in seconds before probing
+
 }
 
 uint32_t ZProbe::read_probe(uint32_t dummy)
@@ -186,6 +193,8 @@ bool ZProbe::run_probe(float& mm, float feedrate, float max_dist, bool reverse)
     // save current actuator position so we can report how far we moved
     float z_start_pos= THEROBOT->actuators[Z_AXIS]->get_current_position();
 
+    if(dwell_before_probing > .0001F) safe_delay_ms(dwell_before_probing*1000);
+    
     // move Z down
     bool dir= (!reverse_z != reverse); // xor
     float delta[3]= {0,0,0};
@@ -373,12 +382,13 @@ void ZProbe::on_gcode_received(void *argument)
                     invert_override= (gcode->get_value('I') != 0);
                     pin.set_inverting(pin.is_inverting() != invert_override); // XOR so inverted pin is not inverted and vice versa
                 }
+                if (gcode->has_letter('D')) this->dwell_before_probing = gcode->get_value('D');
                 break;
 
             case 500: // save settings
             case 503: // print settings
-                gcode->stream->printf(";Probe feedrates Slow/fast(K)/Return (mm/sec) max_z (mm) height (mm):\nM670 S%1.2f K%1.2f R%1.2f Z%1.2f H%1.2f\n",
-                    this->slow_feedrate, this->fast_feedrate, this->return_feedrate, this->max_z, this->probe_height);
+                gcode->stream->printf(";Probe feedrates Slow/fast(K)/Return (mm/sec) max_z (mm) height (mm) dwell (s):\nM670 S%1.2f K%1.2f R%1.2f Z%1.2f H%1.2f D%1.2f\n",
+                    this->slow_feedrate, this->fast_feedrate, this->return_feedrate, this->max_z, this->probe_height, this->dwell_before_probing);
 
                 // fall through is intended so leveling strategies can handle m-codes too
 
@@ -440,28 +450,29 @@ void ZProbe::probe_XYZ(Gcode *gcode, int axis)
 // NOTE must use G53 to force move in machine coordinates and ignore any WCS offsets
 void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool relative)
 {
-    char cmd[64];
+    #define CMDLEN 128
+    char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
 
     if(relative) strcpy(cmd, "G91 G0 ");
     else strcpy(cmd, "G53 G0 "); // G53 forces movement in machine coordinate system
 
     if(!isnan(x)) {
         size_t n= strlen(cmd);
-        snprintf(&cmd[n], sizeof(cmd)-n, " X%1.3f", x);
+        snprintf(&cmd[n], CMDLEN-n, " X%1.3f", x);
     }
     if(!isnan(y)) {
         size_t n= strlen(cmd);
-        snprintf(&cmd[n], sizeof(cmd)-n, " Y%1.3f", y);
+        snprintf(&cmd[n], CMDLEN-n, " Y%1.3f", y);
     }
     if(!isnan(z)) {
         size_t n= strlen(cmd);
-        snprintf(&cmd[n], sizeof(cmd)-n, " Z%1.3f", z);
+        snprintf(&cmd[n], CMDLEN-n, " Z%1.3f", z);
     }
 
     {
         size_t n= strlen(cmd);
         // use specified feedrate (mm/sec)
-        snprintf(&cmd[n], sizeof(cmd)-n, " F%1.1f", feedrate * 60); // feed rate is converted to mm/min
+        snprintf(&cmd[n], CMDLEN-n, " F%1.1f", feedrate * 60); // feed rate is converted to mm/min
     }
 
     if(relative) strcat(cmd, " G90");
@@ -472,10 +483,13 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     THEROBOT->push_state();
     struct SerialMessage message;
     message.message = cmd;
+    delete [] cmd;
+
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
     THEROBOT->pop_state();
+
 }
 
 // issue home command
