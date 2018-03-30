@@ -1475,6 +1475,38 @@ bool Robot::append_arc(Gcode * gcode, const float target[], const float offset[]
         if (angular_travel <= ARC_ANGULAR_TRAVEL_EPSILON) { angular_travel += (2 * PI); }
     }
 
+        gcode->stream->printf("Full Circle: False\r\n");
+    }
+        // Patch from GRBL Firmware - Christoph Baumann 04072015
+        // CCW angle between position and target from circle center. Only one atan2() trig computation required.
+        // Only run if not a full circle
+        angular_travel = atan2f(r_axis0 * rt_axis1 - r_axis1 * rt_axis0, r_axis0 * rt_axis0 + r_axis1 * rt_axis1);
+        gcode->stream->printf("initial angular_travel1: %8.34f\r\n",angular_travel);
+        if (plane_axis_2 == Y_AXIS) { is_clockwise = !is_clockwise; }  //Math for XZ plane is reverse of other 2 planes
+        if (is_clockwise) { // Correct atan2 output per direction
+           if (angular_travel >= -ARC_ANGULAR_TRAVEL_EPSILON) { angular_travel -= (2 * PI); }
+        } else {
+           if (angular_travel <= ARC_ANGULAR_TRAVEL_EPSILON) { angular_travel += (2 * PI); }
+        }
+        gcode->stream->printf("old angular_travel2: %8.34f\r\n",angular_travel);
+     
+        angular_travel = atan2f(r_axis0 * rt_axis1 - r_axis1 * rt_axis0, r_axis0 * rt_axis0 + r_axis1 * rt_axis1);
+     
+        if (plane_axis_2 == Y_AXIS) { is_clockwise = !is_clockwise; }  //Math for XZ plane is reverse of other 2 planes
+        if (is_clockwise) { // Correct atan2 output per direction
+           if (angular_travel > 0) { angular_travel -= (2 * PI); }
+        } else {
+           if (angular_travel < 0) { angular_travel += (2 * PI); }
+        }
+        gcode->stream->printf("new angular_travel2: %8.34f\r\n",angular_travel);
+     
+    angular_travel = acosf(1-(hypotf(rt_axis0-r_axis0,rt_axis1-r_axis1)/2*radius*radius));
+    gcode->stream->printf("new formula angular_travel: %8.34f\r\n",angular_travel);
+    
+    angular_travel = atan2f(r_axis0 * rt_axis0 + r_axis1 * rt_axis1 , r_axis0 * rt_axis1 - r_axis1 * rt_axis0);
+    gcode->stream->printf("opposite Atan2: %8.34f\r\n",angular_travel);
+     
+    
     // Find the distance for this gcode
     float millimeters_of_travel = hypotf(angular_travel * radius, fabsf(linear_travel));
 
