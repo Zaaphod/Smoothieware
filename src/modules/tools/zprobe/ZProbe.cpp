@@ -325,7 +325,7 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode != 2 && gcode->subcode != 3) {
+        if(gcode->subcode != 2 && gcode->subcode != 3 && gcode->subcode != 6 && gcode->subcode != 7 && gcode->subcode != 8) {
             gcode->stream->printf("error:Only G38.2 and G38.3 are supported\n");
             return;
         }
@@ -336,13 +336,15 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        if(this->pin.get()) {
+        if(this->pin.get() && gcode->subcode != 6 && gcode->subcode != 7 && gcode->subcode != 8) {
             gcode->stream->printf("error:ZProbe triggered before move, aborting command.\n");
             return;
         }
 
         // first wait for all moves to finish
-        THEKERNEL->conveyor->wait_for_idle();
+        if (gcode->subcode != 7 && gcode->subcode != 8) {
+            THEKERNEL->conveyor->wait_for_idle();
+        }
 
         float x= NAN, y=NAN, z=NAN;
         if(gcode->has_letter('X')) {
@@ -409,39 +411,48 @@ void ZProbe::on_gcode_received(void *argument)
 // special way to probe in the X or Y or Z direction using planned moves, should work with any kinematics
 void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
 {
-    // enable the probe checking in the timer
-    probing= true;
-    probe_detected= false;
-    THEROBOT->disable_segmentation= true; // we must disable segmentation as this won't work with it enabled (beware on deltas probing in X or Y)
+    // enable the probe checking in the timer if not subcode 7 or 8
+    if (gcode->subcode != 7 && gcode->subcode != 8) {
+        probing= true;
+        probe_detected= false;
+        THEROBOT->disable_segmentation= true; // we must disable segmentation as this won't work with it enabled (beware on deltas probing in X or Y)
+    }
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
     float rate = (gcode->has_letter('F')) ? gcode->get_value('F')/60 : this->slow_feedrate;
 
     // do a regular move which will stop as soon as the probe is triggered, or the distance is reached
     coordinated_move(x, y, z, rate, true);
+    if (gcode->subcode != 6 && gcode->subcode != 7) {
+        THEKERNEL->conveyor->wait_for_idle();
+        THEROBOT->pop_state();
+    }
+
 
     // coordinated_move returns when the move is finished
 
-    // disable probe checking
-    probing= false;
-    THEROBOT->disable_segmentation= false;
+    if (gcode->subcode != 6 && gcode->subcode != 7) {
+        // disable probe checking
+        probing= false;
+        THEROBOT->disable_segmentation= false;
 
-    // if the probe stopped the move we need to correct the last_milestone as it did not reach where it thought
-    // this also sets last_milestone to the machine coordinates it stopped at
-    THEROBOT->reset_position_from_current_actuator_position();
-    float pos[3];
-    THEROBOT->get_axis_position(pos, 3);
-
-    uint8_t probeok= this->probe_detected ? 1 : 0;
-
-    // print results using the GRBL format
-    gcode->stream->printf("[PRB:%1.3f,%1.3f,%1.3f:%d]\n", THEKERNEL->robot->from_millimeters(pos[X_AXIS]), THEKERNEL->robot->from_millimeters(pos[Y_AXIS]), THEKERNEL->robot->from_millimeters(pos[Z_AXIS]), probeok);
-    THEROBOT->set_last_probe_position(std::make_tuple(pos[X_AXIS], pos[Y_AXIS], pos[Z_AXIS], probeok));
-
-    if(probeok == 0 && gcode->subcode == 2) {
-        // issue error if probe was not triggered and subcode == 2
-        gcode->stream->printf("ALARM: Probe fail\n");
-        THEKERNEL->call_event(ON_HALT, nullptr);
+        // if the probe stopped the move we need to correct the last_milestone as it did not reach where it thought
+        // this also sets last_milestone to the machine coordinates it stopped at
+        THEROBOT->reset_position_from_current_actuator_position();
+        float pos[3];
+        THEROBOT->get_axis_position(pos, 3);
+    
+        uint8_t probeok= this->probe_detected ? 1 : 0;
+    
+        // print results using the GRBL format
+        gcode->stream->printf("[PRB:%1.3f,%1.3f,%1.3f:%d]\n", THEKERNEL->robot->from_millimeters(pos[X_AXIS]), THEKERNEL->robot->from_millimeters(pos[Y_AXIS]), THEKERNEL->robot->from_millimeters(pos[Z_AXIS]), probeok);
+        THEROBOT->set_last_probe_position(std::make_tuple(pos[X_AXIS], pos[Y_AXIS], pos[Z_AXIS], probeok));
+    
+        if(probeok == 0 && gcode->subcode == 2) {
+            // issue error if probe was not triggered and subcode == 2
+            gcode->stream->printf("ALARM: Probe fail\n");
+            THEKERNEL->call_event(ON_HALT, nullptr);
+        }
     }
 }
 
@@ -487,9 +498,7 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
 
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
-    THEKERNEL->conveyor->wait_for_idle();
-    THEROBOT->pop_state();
-
+    
 }
 
 // issue home command
