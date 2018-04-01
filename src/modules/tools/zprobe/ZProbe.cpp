@@ -150,7 +150,8 @@ void ZProbe::config_load()
 
 uint32_t ZProbe::read_probe(uint32_t dummy)
 {
-    if(!probing || probe_detected) return 0;
+//    if(!probing || probe_detected) return 0;
+    if(!probing) return 0;
 
     // we check all axis as it maybe a G38.2 X10 for instance, not just a probe in Z
     if(STEPPER[X_AXIS]->is_moving() || STEPPER[Y_AXIS]->is_moving() || STEPPER[Z_AXIS]->is_moving()) {
@@ -325,7 +326,9 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode != 2 && gcode->subcode != 3 && gcode->subcode != 6 && gcode->subcode != 7 && gcode->subcode != 8) {
+        gcode->stream->printf("G code G%d,  Subcode %d\n", gcode->g, gcode->subcode);
+        
+        if(gcode->subcode != 2 && gcode->subcode != 3 && gcode->subcode != 5 && gcode->subcode != 6 && gcode->subcode != 7) {
             gcode->stream->printf("error:Only G38.2 and G38.3 are supported\n");
             return;
         }
@@ -336,13 +339,13 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        if(this->pin.get() && gcode->subcode != 6 && gcode->subcode != 7 && gcode->subcode != 8) {
+        if(this->pin.get() && gcode->subcode != 5 && gcode->subcode != 6 && gcode->subcode != 7) {
             gcode->stream->printf("error:ZProbe triggered before move, aborting command.\n");
             return;
         }
 
         // first wait for all moves to finish
-        if (gcode->subcode != 7 && gcode->subcode != 8) {
+        if (gcode->subcode != 6 && gcode->subcode != 7) {
             THEKERNEL->conveyor->wait_for_idle();
         }
 
@@ -364,8 +367,15 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        probe_XYZ(gcode, x, y, z);
-
+        if(gcode->subcode >= 5 && gcode->subcode <= 7) {
+            if(this->pin.get() ) {
+               gcode->stream->printf("ZProbe triggered already, skipping move.\n");
+            } else {
+              probe_XYZ(gcode, x, y, z);
+            }
+        } else {
+            probe_XYZ(gcode, x, y, z);
+        }
         return;
 
     } else if(gcode->has_m) {
@@ -411,9 +421,9 @@ void ZProbe::on_gcode_received(void *argument)
 // special way to probe in the X or Y or Z direction using planned moves, should work with any kinematics
 void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
 {
-    // enable the probe checking in the timer if not subcode 7 or 8
-    if (gcode->subcode != 7 && gcode->subcode != 8) {
-        probing= true;
+    // enable the probe checking in the timer if not subcode 6 or 7
+    probing= true;
+    if (gcode->subcode != 6 && gcode->subcode != 7) {
         probe_detected= false;
         THEROBOT->disable_segmentation= true; // we must disable segmentation as this won't work with it enabled (beware on deltas probing in X or Y)
     }
@@ -422,8 +432,11 @@ void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
     float rate = (gcode->has_letter('F')) ? gcode->get_value('F')/60 : this->slow_feedrate;
 
     // do a regular move which will stop as soon as the probe is triggered, or the distance is reached
-    coordinated_move(x, y, z, rate, true);
     if (gcode->subcode != 6 && gcode->subcode != 7) {
+        THEROBOT->push_state();
+    }
+    coordinated_move(x, y, z, rate, true);
+    if (gcode->subcode != 5 && gcode->subcode != 6) {
         THEKERNEL->conveyor->wait_for_idle();
         THEROBOT->pop_state();
     }
@@ -431,7 +444,7 @@ void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
 
     // coordinated_move returns when the move is finished
 
-    if (gcode->subcode != 6 && gcode->subcode != 7) {
+    if (gcode->subcode != 5 && gcode->subcode != 6) {
         // disable probe checking
         probing= false;
         THEROBOT->disable_segmentation= false;
@@ -488,10 +501,9 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
 
     if(relative) strcat(cmd, " G90");
 
-    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
-
+    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
     // send as a command line as may have multiple G codes in it
-    THEROBOT->push_state();
+    //THEROBOT->push_state();
     struct SerialMessage message;
     message.message = cmd;
     delete [] cmd;
