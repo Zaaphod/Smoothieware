@@ -150,7 +150,6 @@ void ZProbe::config_load()
 
 uint32_t ZProbe::read_probe(uint32_t dummy)
 {
-//    if(!probing || probe_detected) return 0;
     if(!probing) return 0;
 
     // we check all axis as it maybe a G38.2 X10 for instance, not just a probe in Z
@@ -326,9 +325,7 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        gcode->stream->printf("G code G%d,  Subcode %d\n", gcode->g, gcode->subcode);
-        
-        if(gcode->subcode != 2 && gcode->subcode != 3 && gcode->subcode != 5 && gcode->subcode != 6 && gcode->subcode != 7) {
+        if(gcode->subcode != 2 && gcode->subcode != 3 && gcode->subcode != 6 && gcode->subcode != 7) {
             gcode->stream->printf("error:Only G38.2 and G38.3 are supported\n");
             return;
         }
@@ -349,7 +346,7 @@ void ZProbe::on_gcode_received(void *argument)
             THEKERNEL->conveyor->wait_for_idle();
         }
 
-        float x= NAN, y=NAN, z=NAN;
+        float x= NAN, y=NAN, z=NAN, i=NAN, j=NAN;
         if(gcode->has_letter('X')) {
             x= gcode->get_value('X');
         }
@@ -362,20 +359,21 @@ void ZProbe::on_gcode_received(void *argument)
             z= gcode->get_value('Z');
         }
 
+        if(gcode->has_letter('I')) {
+            i= gcode->get_value('I');
+        }
+
+        if(gcode->has_letter('J')) {
+            j= gcode->get_value('J');
+        }
+
         if(isnan(x) && isnan(y) && isnan(z)) {
             gcode->stream->printf("error:at least one of X Y or Z must be specified\n");
             return;
         }
 
-        if(gcode->subcode >= 5 && gcode->subcode <= 7) {
-            if(this->pin.get() ) {
-               gcode->stream->printf("ZProbe triggered already, skipping move.\n");
-            } else {
-              probe_XYZ(gcode, x, y, z);
-            }
-        } else {
-            probe_XYZ(gcode, x, y, z);
-        }
+        probe_XYZ(gcode, x, y, z, i, j);
+
         return;
 
     } else if(gcode->has_m) {
@@ -419,7 +417,7 @@ void ZProbe::on_gcode_received(void *argument)
 }
 
 // special way to probe in the X or Y or Z direction using planned moves, should work with any kinematics
-void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
+void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z, float i, float j)
 {
     // enable the probe checking in the timer if not subcode 6 or 7
     probing= true;
@@ -432,14 +430,13 @@ void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
     float rate = (gcode->has_letter('F')) ? gcode->get_value('F')/60 : this->slow_feedrate;
 
     // do a regular move which will stop as soon as the probe is triggered, or the distance is reached
-    if (gcode->subcode != 6 && gcode->subcode != 7) {
-        THEROBOT->push_state();
-    }
-    coordinated_move(x, y, z, rate, true);
-    if (gcode->subcode != 5 && gcode->subcode != 6) {
-        THEKERNEL->conveyor->wait_for_idle();
-        THEROBOT->pop_state();
-    }
+   if (gcode->subcode == 6) {
+       coordinated_arc(x, y, z, i, j, rate, true, true);
+   } else if (gcode->subcode == 7) {
+       coordinated_arc(x, y, z, i, j, rate, true, false);
+   } else {
+       coordinated_move(x, y, z, rate, true);
+   }
 
 
     // coordinated_move returns when the move is finished
@@ -502,6 +499,7 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     if(relative) strcat(cmd, " G90");
 
     THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+
     // send as a command line as may have multiple G codes in it
     //THEROBOT->push_state();
     struct SerialMessage message;
@@ -511,6 +509,67 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     
+}
+void ZProbe::coordinated_arc(float x, float y, float z, float i, float j, float feedrate, bool relative, bool cw)
+{
+    #define CMDLEN 128
+    char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
+
+    if(relative) strcpy(cmd, "G91 G");
+    else strcpy(cmd, "G53 G"); // G53 forces movement in machine coordinate system
+    size_t n= strlen(cmd);
+    if(isnan(i) && isnan(j)) {
+        snprintf(&cmd[n], CMDLEN-n, "0 ");
+    } else {
+        if (cw) {
+            snprintf(&cmd[n], CMDLEN-n, "2 ");
+        } else {
+            snprintf(&cmd[n], CMDLEN-n, "3 ");
+        }
+    }
+
+    if(!isnan(x)) {
+        size_t n= strlen(cmd);
+        snprintf(&cmd[n], CMDLEN-n, " X%1.3f", x);
+    }
+    if(!isnan(y)) {
+        size_t n= strlen(cmd);
+        snprintf(&cmd[n], CMDLEN-n, " Y%1.3f", y);
+    }
+    if(!isnan(z)) {
+        size_t n= strlen(cmd);
+        snprintf(&cmd[n], CMDLEN-n, " Z%1.3f", z);
+    }
+    if(!isnan(i)) {
+        size_t n= strlen(cmd);
+        snprintf(&cmd[n], CMDLEN-n, " I%1.3f", i);
+    }
+    if(!isnan(j)) {
+        size_t n= strlen(cmd);
+        snprintf(&cmd[n], CMDLEN-n, " J%1.3f", j);
+    }
+
+    {
+        size_t n= strlen(cmd);
+        // use specified feedrate (mm/sec)
+        snprintf(&cmd[n], CMDLEN-n, " F%1.1f", feedrate * 60); // feed rate is converted to mm/min
+    }
+
+    if(relative) strcat(cmd, " G90");
+
+    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+
+    // send as a command line as may have multiple G codes in it
+    THEROBOT->push_state();
+    struct SerialMessage message;
+    message.message = cmd;
+    delete [] cmd;
+
+    message.stream = &(StreamOutput::NullStream);
+    THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
+    THEKERNEL->conveyor->wait_for_idle();
+    THEROBOT->pop_state();
+
 }
 
 // issue home command

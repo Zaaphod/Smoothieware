@@ -37,6 +37,7 @@ public:
     bool doProbeAt(float &mm, float x, float y);
 
     void coordinated_move(float x, float y, float z, float feedrate, bool relative=false);
+    void coordinated_arc(float x, float y, float z, float i, float j, float feedrate, bool relative=false, bool cw=false);
     void home();
 
     bool getProbeStatus() { return this->pin.get(); }
@@ -47,7 +48,7 @@ public:
 
 private:
     void config_load();
-    void probe_XYZ(Gcode *gc, float x, float y, float z);
+    void probe_XYZ(Gcode *gc, float x, float y, float z, float i, float j);
     uint32_t read_probe(uint32_t dummy);
 
     float slow_feedrate;
