@@ -326,8 +326,8 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode < 2 || gcode->subcode > 5) {
-            gcode->stream->printf("error:Only G38.2 to G38.5 are supported\n");
+        if(gcode->subcode < 2 || gcode->subcode > 7) {
+            gcode->stream->printf("error:Only G38.2 to G38.7 are supported\n");
             return;
         }
 
