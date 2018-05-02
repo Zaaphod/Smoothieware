@@ -326,8 +326,8 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode < 2 || gcode->subcode > 7) {
-            gcode->stream->printf("error:Only G38.2 to G38.7 are supported\n");
+        if(gcode->subcode < 2 || gcode->subcode > 9) {
+            gcode->stream->printf("error:G38.%d Not supported, Only G38.2 to G38.9 are supported\n",gcode->subcode);
             return;
         }
 
@@ -337,7 +337,7 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        if(this->pin.get() ^ (gcode->subcode >= 4)) {
+        if(this->pin.get() ^ (gcode->subcode == 4 || gcode->subcode == 5 || gcode->subcode >= 8) ) {
             gcode->stream->printf("error:ZProbe triggered before move, aborting command.\n");
             return;
         }
@@ -357,7 +357,7 @@ void ZProbe::on_gcode_received(void *argument)
         if(gcode->has_letter('Z')) {
             z= gcode->get_value('Z');
         }
-        if (gcode->subcode == 6 || gcode->subcode == 7) {
+        if(gcode->subcode >= 6) {
             if(gcode->has_letter('I')) {
                 i= gcode->get_value('I');
             }
@@ -369,22 +369,25 @@ void ZProbe::on_gcode_received(void *argument)
                 gcode->stream->printf("error: both I and J must be specified\n");
                 return;
             }
+            if(gcode->subcode >= 8) {
+               invert_probe = true;
+            } else {
+               invert_probe = false;
+            }
             probe_XYZ(gcode, i, j, NAN);
         } else {
             if(isnan(x) && isnan(y) && isnan(z)) {
                 gcode->stream->printf("error: at least one of X Y or Z must be specified\n");
                 return;
             }
+            if(gcode->subcode >= 4) {
+               invert_probe = true;
+            } else {
+               invert_probe = false;
+            }
+
             probe_XYZ(gcode, x, y, z);
         }
-
-        if(gcode->subcode == 4 || gcode->subcode == 5) {
-            invert_probe = true;
-        } else {
-            invert_probe = false;
-        }
-
-        probe_XYZ(gcode, x, y, z);
 
         invert_probe = false;
 
@@ -440,10 +443,10 @@ void ZProbe::probe_XYZ(Gcode *gcode, float x, float y, float z)
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
     float rate = (gcode->has_letter('F')) ? gcode->get_value('F')/60 : this->slow_feedrate;
-    if (gcode->subcode == 6) {
+    if (gcode->subcode == 6 || gcode->subcode == 8) {
         // do a full clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
         coordinated_circle(x, y, rate, true);
-    } else if (gcode->subcode == 7) {
+    } else if (gcode->subcode == 7 || gcode->subcode == 9) {
         // do a full counter clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
         coordinated_circle(x, y, rate, false);
     } else {
