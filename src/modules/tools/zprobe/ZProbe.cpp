@@ -328,8 +328,8 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode < 2 || gcode->subcode > 5) {
-            gcode->stream->printf("error:Only G38.2 to G38.5 are supported\n");
+        if(gcode->subcode < 2 || gcode->subcode > 9) {
+            gcode->stream->printf("error:G38.%d Not supported, Only G38.2 to G38.9 are supported\n",gcode->subcode);
             return;
         }
 
@@ -531,6 +531,35 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
     THEROBOT->pop_state();
+}
+
+void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
+{
+    #define CMDLEN 128
+    char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
+    strcpy(cmd, "G91"); //Always use relative for a full circle from current location
+    size_t n= strlen(cmd);
+    snprintf(&cmd[n], CMDLEN-n, " G0 F%1.1f G",feedrate * 60);//Always do a G0 to nowhere to set Circle Start point.
+    n= strlen(cmd);
+    if (cw) {
+        snprintf(&cmd[n], CMDLEN-n, "2 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i ,j, feedrate * 60);
+    } else {
+        snprintf(&cmd[n], CMDLEN-n, "3 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i, j, feedrate * 60);
+    }
+
+    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+
+    // send as a command line as may have multiple G codes in it
+    THEROBOT->push_state();
+    struct SerialMessage message;
+    message.message = cmd;
+    delete [] cmd;
+
+    message.stream = &(StreamOutput::NullStream);
+    THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
+    THEKERNEL->conveyor->wait_for_idle();
+    THEROBOT->pop_state();
+
 }
 
 // issue home command
