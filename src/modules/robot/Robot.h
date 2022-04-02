@@ -50,8 +50,8 @@ class Robot : public Module {
         void check_max_actuator_speeds();
         float to_millimeters( float value ) const { return this->inch_mode ? value * 25.4F : value; }
         float from_millimeters( float value) const { return this->inch_mode ? value/25.4F : value;  }
-        float to_rotary_scale( float value, int axis );
-        float from_rotary_scale( float value, int axis);
+        float to_rotary_scale( float value, int axis ) const;
+        float from_rotary_scale( float value, int axis) const;
         float to_unit_scale( float value, int axis) const;
         float from_unit_scale( float value, int axis) const;
         float get_axis_position(int axis) const { return(this->machine_position[axis]); }
