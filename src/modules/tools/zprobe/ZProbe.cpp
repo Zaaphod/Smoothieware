@@ -207,7 +207,7 @@ bool ZProbe::run_probe(float& mm, float feedrate, float max_dist, bool reverse)
 
     // now see how far we moved, get delta in z we moved
     // NOTE this works for deltas as well as all three actuators move the same amount in Z
-    mm= z_start_pos - THEROBOT->actuators[2]->get_current_position();
+    mm= z_start_pos - THEROBOT->actuators[Z_AXIS]->get_current_position();
 
     // set the last probe position to the actuator units moved during this home
     // TODO maybe we should store current actuator position rather than the delta?
@@ -285,7 +285,7 @@ void ZProbe::on_gcode_received(void *argument)
 
             if(probe_result) {
                 // the result is in actuator coordinates moved
-                gcode->stream->printf("Z:%1.4f\n", THEKERNEL->robot->from_millimeters(mm));
+                gcode->stream->printf("Z:%1.4f\n", THEROBOT->from_millimeters(mm));
 
                 if(set_z) {
                     // set current Z to the specified value, shortcut for G92 Znnn
@@ -427,11 +427,11 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     float i= NAN, j= NAN;
     if(gcode->subcode >= 6) {
         if(gcode->has_letter('I')) {
-            i=  THEKERNEL->robot->to_millimeters(gcode->get_value('I'));
+            i=  THEROBOT->to_millimeters(gcode->get_value('I'));
         }
   
         if(gcode->has_letter('J')) {
-            j=  THEKERNEL->robot->to_millimeters(gcode->get_value('J'));
+            j=  THEROBOT->to_millimeters(gcode->get_value('J'));
         }
 
         if(isnan(i) || isnan(j)) {
@@ -440,15 +440,15 @@ void ZProbe::probe_XYZ(Gcode *gcode)
         }
     } else {
         if(gcode->has_letter('X')) {
-            x= THEKERNEL->robot->to_millimeters(gcode->get_value('X'));
+            x= THEROBOT->to_millimeters(gcode->get_value('X'));
         }
 
         if(gcode->has_letter('Y')) {
-            y= THEKERNEL->robot->to_millimeters(gcode->get_value('Y'));
+            y= THEROBOT->to_millimeters(gcode->get_value('Y'));
         }
 
         if(gcode->has_letter('Z')) {
-            z= THEKERNEL->robot->to_millimeters(gcode->get_value('Z'));
+            z= THEROBOT->to_millimeters(gcode->get_value('Z'));
         }
 
         if(x == 0 && y == 0 && z == 0) {
@@ -458,7 +458,7 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     }
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
-    float rate = (gcode->has_letter('F')) ? THEKERNEL->robot->to_millimeters(gcode->get_value('F'))/60 : this->slow_feedrate;
+    float rate = (gcode->has_letter('F')) ? THEROBOT->to_millimeters(gcode->get_value('F'))/60 : this->slow_feedrate;
 
     // first wait for all moves to finish
     THEKERNEL->conveyor->wait_for_idle();
@@ -503,7 +503,7 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     uint8_t probeok= this->probe_detected ? 1 : 0;
 
     // print results using the GRBL format
-    gcode->stream->printf("[PRB:%1.3f,%1.3f,%1.3f:%d]\n", THEKERNEL->robot->from_millimeters(pos[X_AXIS]), THEKERNEL->robot->from_millimeters(pos[Y_AXIS]), THEKERNEL->robot->from_millimeters(pos[Z_AXIS]), probeok);
+    gcode->stream->printf("[PRB:%1.3f,%1.3f,%1.3f:%d]\n", THEROBOT->from_millimeters(pos[X_AXIS]), THEROBOT->from_millimeters(pos[Y_AXIS]), THEROBOT->from_millimeters(pos[Z_AXIS]), probeok);
     THEROBOT->set_last_probe_position(std::make_tuple(pos[X_AXIS], pos[Y_AXIS], pos[Z_AXIS], probeok));
 
     if(probeok == 0 && (gcode->subcode == 2 || gcode->subcode == 4)) {
