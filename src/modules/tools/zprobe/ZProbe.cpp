@@ -328,8 +328,8 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode < 2 || gcode->subcode > 5) {
-            gcode->stream->printf("error:Only G38.2 to G38.5 are supported\n");
+        if(gcode->subcode < 2 || gcode->subcode > 9) {
+            gcode->stream->printf("error:G38.%d Not supported, Only G38.2 to G38.9 are supported\n",gcode->subcode);
             return;
         }
 
@@ -339,7 +339,7 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        if(gcode->subcode == 4 || gcode->subcode == 5) {
+        if(gcode->subcode == 4 || gcode->subcode == 5 || gcode->subcode == 8 || gcode->subcode == 9) {
             // we need to invert the probe sense (Note it may already be overrided)
             invert_override= !invert_override;
             pin.set_inverting(pin.is_inverting() != invert_override); // XOR so inverted pin is not inverted and vice versa
@@ -347,7 +347,7 @@ void ZProbe::on_gcode_received(void *argument)
 
         probe_XYZ(gcode);
 
-        if(gcode->subcode == 4 || gcode->subcode == 5) {
+        if(gcode->subcode == 4 || gcode->subcode == 5 || gcode->subcode == 8 || gcode->subcode == 9) {
             // restore probe sense invert
             pin.set_inverting(pin.is_inverting() != invert_override); // XOR so inverted pin is not inverted and vice versa
             invert_override= !invert_override;
@@ -423,7 +423,7 @@ void ZProbe::on_gcode_received(void *argument)
 // special way to probe in the X or Y or Z direction using planned moves, should work with any kinematics
 void ZProbe::probe_XYZ(Gcode *gcode)
 {
-    float x= 0, y= 0, z= 0;
+    float x= 0, y= 0, z= 0, i= 0, j= 0;
     if(gcode->has_letter('X')) {
         x= gcode->get_value('X');
     }
@@ -434,6 +434,20 @@ void ZProbe::probe_XYZ(Gcode *gcode)
 
     if(gcode->has_letter('Z')) {
         z= gcode->get_value('Z');
+    }
+
+    if(gcode->subcode >= 6) {
+        if(gcode->has_letter('I')) {
+            i= gcode->get_value('I');
+        }
+  
+        if(gcode->has_letter('J')) {
+            j= gcode->get_value('J');
+        }
+        if(isnan(i) || isnan(j)) {
+            gcode->stream->printf("error: both I and J must be specified\n");
+            return;
+        }
     }
 
     if(x == 0 && y == 0 && z == 0) {
@@ -456,13 +470,21 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     probing= true;
     probe_detected= false;
     debounce= 0;
-
-    // do a delta move which will stop as soon as the probe is triggered, or the distance is reached
-    float delta[3]= {x, y, z};
-    if(!THEROBOT->delta_move(delta, rate, 3)) {
-        gcode->stream->printf("error:No move detected or too small\n");
-        probing= false;
-        return;
+    
+   if (gcode->subcode == 6 || gcode->subcode == 8) {
+        // do a full clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
+        coordinated_circle(x, y, rate, true);
+    } else if (gcode->subcode == 7 || gcode->subcode == 9) {
+        // do a full counter clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
+        coordinated_circle(x, y, rate, false);
+    } else {
+        // do a delta move which will stop as soon as the probe is triggered, or the distance is reached
+        float delta[3]= {x, y, z};
+        if(!THEROBOT->delta_move(delta, rate, 3)) {
+            gcode->stream->printf("error:No move detected or too small\n");
+            probing= false;
+            return;
+        }
     }
 
     THEKERNEL->conveyor->wait_for_idle();
@@ -531,6 +553,35 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
     THEROBOT->pop_state();
+}
+
+void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
+{
+    #define CMDLEN 128
+    char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
+    strcpy(cmd, "G91"); //Always use relative for a full circle from current location
+    size_t n= strlen(cmd);
+    snprintf(&cmd[n], CMDLEN-n, " G0 F%1.1f G",feedrate * 60);//Always do a G0 to nowhere to set Circle Start point.
+    n= strlen(cmd);
+    if (cw) {
+        snprintf(&cmd[n], CMDLEN-n, "2 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i ,j, feedrate * 60);
+    } else {
+        snprintf(&cmd[n], CMDLEN-n, "3 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i, j, feedrate * 60);
+    }
+
+    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+
+    // send as a command line as may have multiple G codes in it
+    THEROBOT->push_state();
+    struct SerialMessage message;
+    message.message = cmd;
+    delete [] cmd;
+
+    message.stream = &(StreamOutput::NullStream);
+    THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
+    THEKERNEL->conveyor->wait_for_idle();
+    THEROBOT->pop_state();
+
 }
 
 // issue home command
