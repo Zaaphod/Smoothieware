@@ -423,40 +423,42 @@ void ZProbe::on_gcode_received(void *argument)
 // special way to probe in the X or Y or Z direction using planned moves, should work with any kinematics
 void ZProbe::probe_XYZ(Gcode *gcode)
 {
-    float x= 0, y= 0, z= 0, i= 0, j= 0;
-    if(gcode->has_letter('X')) {
-        x= gcode->get_value('X');
-    }
-
-    if(gcode->has_letter('Y')) {
-        y= gcode->get_value('Y');
-    }
-
-    if(gcode->has_letter('Z')) {
-        z= gcode->get_value('Z');
-    }
-
+    float x= 0, y= 0, z= 0;
+    float i= NAN, j= NAN;
     if(gcode->subcode >= 6) {
         if(gcode->has_letter('I')) {
-            i= gcode->get_value('I');
+            i=  THEKERNEL->robot->to_millimeters(gcode->get_value('I'));
         }
   
         if(gcode->has_letter('J')) {
-            j= gcode->get_value('J');
+            j=  THEKERNEL->robot->to_millimeters(gcode->get_value('J'));
         }
+
         if(isnan(i) || isnan(j)) {
             gcode->stream->printf("error: both I and J must be specified\n");
             return;
         }
-    }
+    } else {
+        if(gcode->has_letter('X')) {
+            x= THEKERNEL->robot->to_millimeters(gcode->get_value('X'));
+        }
 
-    if(x == 0 && y == 0 && z == 0) {
-        gcode->stream->printf("error:at least one of X Y or Z must be specified, and be > or < 0\n");
-        return;
+        if(gcode->has_letter('Y')) {
+            y= THEKERNEL->robot->to_millimeters(gcode->get_value('Y'));
+        }
+
+        if(gcode->has_letter('Z')) {
+            z= THEKERNEL->robot->to_millimeters(gcode->get_value('Z'));
+        }
+
+        if(x == 0 && y == 0 && z == 0) {
+            gcode->stream->printf("error:at least one of X Y or Z must be specified, and be > or < 0\n");
+            return;
+        }
     }
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
-    float rate = (gcode->has_letter('F')) ? gcode->get_value('F')/60 : this->slow_feedrate;
+    float rate = (gcode->has_letter('F')) ? THEKERNEL->robot->to_millimeters(gcode->get_value('F'))/60 : this->slow_feedrate;
 
     // first wait for all moves to finish
     THEKERNEL->conveyor->wait_for_idle();
@@ -471,12 +473,12 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     probe_detected= false;
     debounce= 0;
     
-   if (gcode->subcode == 6 || gcode->subcode == 8) {
+    if (gcode->subcode == 6 || gcode->subcode == 8) {
         // do a full clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
-        coordinated_circle(x, y, rate, true);
+        coordinated_circle(i, j, rate, true);
     } else if (gcode->subcode == 7 || gcode->subcode == 9) {
         // do a full counter clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
-        coordinated_circle(x, y, rate, false);
+        coordinated_circle(i, j, rate, false);
     } else {
         // do a delta move which will stop as soon as the probe is triggered, or the distance is reached
         float delta[3]= {x, y, z};
@@ -559,17 +561,19 @@ void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
 {
     #define CMDLEN 128
     char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
-    strcpy(cmd, "G91"); //Always use relative for a full circle from current location
+    strcpy(cmd, "G91 "); //Always use relative for a full circle from current location
     size_t n= strlen(cmd);
-    snprintf(&cmd[n], CMDLEN-n, " G0 F%1.1f G",feedrate * 60);//Always do a G0 to nowhere to set Circle Start point.
+    snprintf(&cmd[n], CMDLEN-n, "G21 "); //Always use Millimeters to be compatible with other probe functions
     n= strlen(cmd);
     if (cw) {
-        snprintf(&cmd[n], CMDLEN-n, "2 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i ,j, feedrate * 60);
+        snprintf(&cmd[n], CMDLEN-n, "G02 ");
     } else {
-        snprintf(&cmd[n], CMDLEN-n, "3 X0 Y0 Z0 I%1.3f J%1.3f F%1.1f G90", i, j, feedrate * 60);
+        snprintf(&cmd[n], CMDLEN-n, "G03 ");
     }
+    n= strlen(cmd);
+    snprintf(&cmd[n], CMDLEN-n, "X0 Y0 Z0 I%1.3f J%1.3f F%1.1f ", i, j, feedrate * 60);
 
-    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
 
     // send as a command line as may have multiple G codes in it
     THEROBOT->push_state();
