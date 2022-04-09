@@ -564,8 +564,6 @@ void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
     char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
     strcpy(cmd, "G91 "); //Always use relative for a full circle from current location
     size_t n= strlen(cmd);
-    snprintf(&cmd[n], CMDLEN-n, "G21 "); //Always use Millimeters to be compatible with other probe functions
-    n= strlen(cmd);
     if (cw) {
         snprintf(&cmd[n], CMDLEN-n, "G02 ");
     } else {
@@ -574,10 +572,11 @@ void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
     n= strlen(cmd);
     snprintf(&cmd[n], CMDLEN-n, "X0 Y0 Z0 I%1.3f J%1.3f F%1.1f ", i, j, feedrate * 60);
 
-    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
 
     // send as a command line as may have multiple G codes in it
     THEROBOT->push_state();
+    THEROBOT->inch_mode = false; //turn off inch_mode.  No need to restore it as the pop_state will do that
     struct SerialMessage message;
     message.message = cmd;
     delete [] cmd;
