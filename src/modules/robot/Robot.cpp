@@ -370,7 +370,7 @@ void Robot::print_position(uint8_t subcode, std::string& res, bool ignore_extrud
     // and then invert all the transforms to get a workspace position from machine position
     // M114 just does it the old way uses machine_position and does inverse transforms to get the requested position
     uint32_t n = 0;
-    char buf[64];
+    char buf[128];
     if(subcode == 0) { // M114 print WCS
         wcs_t pos= mcs2wcs(machine_position);
         n = snprintf(buf, sizeof(buf), "C: X:%1.4f Y:%1.4f Z:%1.4f", from_unit_scale(from_millimeters(std::get<X_AXIS>(pos)),X_AXIS), from_unit_scale(from_millimeters(std::get<Y_AXIS>(pos)),Y_AXIS), from_unit_scale(from_millimeters(std::get<Z_AXIS>(pos)),Z_AXIS));
@@ -395,6 +395,10 @@ void Robot::print_position(uint8_t subcode, std::string& res, bool ignore_extrud
         if(subcode == 1) { // M114.1 print realtime WCS
             wcs_t pos= mcs2wcs(mpos);
             n = snprintf(buf, sizeof(buf), "WCS: X:%1.4f Y:%1.4f Z:%1.4f", from_unit_scale(from_millimeters(std::get<X_AXIS>(pos)),X_AXIS), from_unit_scale(from_millimeters(std::get<Y_AXIS>(pos)),Y_AXIS), from_unit_scale(from_millimeters(std::get<Z_AXIS>(pos)),Z_AXIS));
+
+        } else if(subcode == 6) { // M114.6 print realtime WCS to 30 places
+            wcs_t pos= mcs2wcs(mpos);
+            n = snprintf(buf, sizeof(buf), "WCS: X:%1.30f Y:%1.30f Z:%1.30f", from_unit_scale(from_millimeters(std::get<X_AXIS>(pos)),X_AXIS), from_unit_scale(from_millimeters(std::get<Y_AXIS>(pos)),Y_AXIS), from_unit_scale(from_millimeters(std::get<Z_AXIS>(pos)),Z_AXIS));
 
         } else if(subcode == 2) { // M114.2 print realtime Machine coordinate system
             n = snprintf(buf, sizeof(buf), "MCS: X:%1.4f Y:%1.4f Z:%1.4f", mpos[X_AXIS], mpos[Y_AXIS], mpos[Z_AXIS]);
@@ -604,9 +608,9 @@ void Robot::on_gcode_received(void *argument)
                 } else if(gcode->subcode == 4) {
                     // G92.4 is a smoothie special it sets manual homing for X,Y,Z
                     // do a manual homing based on given coordinates, no endstops required
-                    if(gcode->has_letter('X')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('X')),X_AXIS), X_AXIS); }
-                    if(gcode->has_letter('Y')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('Y')),Y_AXIS), Y_AXIS); }
-                    if(gcode->has_letter('Z')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('Z')),Z_AXIS), Z_AXIS); }
+                    if(gcode->has_letter('X')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('X')),X_AXIS),X_AXIS); }
+                    if(gcode->has_letter('Y')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('Y')),Y_AXIS),Y_AXIS); }
+                    if(gcode->has_letter('Z')){ THEROBOT->reset_axis_position(to_unit_scale(to_millimeters(gcode->get_value('Z')),Z_AXIS),Z_AXIS); }
 
                 } else if(gcode->subcode == 3) {
                     // initialize G92 to the specified values, only used for saving it with M500
@@ -614,6 +618,14 @@ void Robot::on_gcode_received(void *argument)
                     if(gcode->has_letter('X')) x= gcode->get_value('X');
                     if(gcode->has_letter('Y')) y= gcode->get_value('Y');
                     if(gcode->has_letter('Z')) z= gcode->get_value('Z');
+                    g92_offset = wcs_t(x, y, z);
+
+                } else if(gcode->subcode == 5) {
+                    // initialize G92 to the specified values
+                    float x= 0, y= 0, z= 0;
+                    if(gcode->has_letter('X')) x= to_unit_scale(to_millimeters(gcode->get_value('X')),X_AXIS);
+                    if(gcode->has_letter('Y')) y= to_unit_scale(to_millimeters(gcode->get_value('Y')),Y_AXIS);
+                    if(gcode->has_letter('Z')) z= to_unit_scale(to_millimeters(gcode->get_value('Z')),Z_AXIS);
                     g92_offset = wcs_t(x, y, z);
 
                 } else {
