@@ -277,7 +277,7 @@ void ZProbe::on_gcode_received(void *argument)
             bool set_z= (gcode->has_letter('Z') && !is_rdelta);
             bool probe_result;
             bool reverse= (gcode->has_letter('R') && gcode->get_value('R') != 0); // specify to probe in reverse direction
-            float rate= gcode->has_letter('F') ? gcode->get_value('F') / 60 : this->slow_feedrate;
+            float rate= gcode->has_letter('F') ? THEROBOT->to_millimeters(gcode->get_value('F') / 60) : this->slow_feedrate;
             float mm;
 
             // if not setting Z ( and not subcode 1) then return probe to where it started, otherwise leave it where it is
@@ -458,7 +458,7 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     }
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
-    float rate = (gcode->has_letter('F')) ? THEROBOT->to_millimeters(gcode->get_value('F'))/60 : this->slow_feedrate;
+    float rate = (gcode->has_letter('F')) ? THEROBOT->to_millimeters(gcode->get_value('F')/60) : this->slow_feedrate;
 
     // first wait for all moves to finish
     THEKERNEL->conveyor->wait_for_idle();
@@ -547,6 +547,7 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
 
     // send as a command line as may have multiple G codes in it
     THEROBOT->push_state();
+    THEROBOT->inch_mode = false; //turn off inch_mode.  No need to restore it as the pop_state will do that
     struct SerialMessage message;
     message.message = cmd;
     delete [] cmd;
