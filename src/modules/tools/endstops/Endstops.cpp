@@ -646,10 +646,32 @@ void Endstops::home_xy()
 {
     if(axis_to_home[X_AXIS] && axis_to_home[Y_AXIS]) {
         // Home XY first so as not to slow them down by homing Z at the same time
-        float delta[3] {homing_axis[X_AXIS].max_travel, homing_axis[Y_AXIS].max_travel, 0};
+        //if X&Y have differnt home rates, this will make them each move at their designated rate during the combined move
+        //calulate new distance so they are relative to each other, this will cause each axis to move at the designated rate
+        float feed_ratio= homing_axis[X_AXIS].fast_rate/homing_axis[Y_AXIS].fast_rate;
+        float feed_Y_distance= 0;
+        float feed_X_distance= 0;
+        if (feed_ratio>=1) {
+             if (homing_axis[Y_AXIS].max_travel*feed_ratio >= homing_axis[X_AXIS].max_travel) {
+                 feed_X_distance= homing_axis[Y_AXIS].max_travel*feed_ratio;
+                 feed_Y_distance= homing_axis[Y_AXIS].max_travel;
+             } else {
+                 feed_X_distance= homing_axis[X_AXIS].max_travel;
+                 feed_Y_distance= homing_axis[X_AXIS].max_travel/feed_ratio;
+             }
+        } else {
+             if (homing_axis[X_AXIS].max_travel*feed_ratio >= homing_axis[Y_AXIS].max_travel) {
+                 feed_Y_distance= homing_axis[X_AXIS].max_travel*feed_ratio;
+                 feed_X_distance= homing_axis[X_AXIS].max_travel;
+             } else {
+                 feed_Y_distance= homing_axis[Y_AXIS].max_travel;
+                 feed_X_distance= homing_axis[Y_AXIS].max_travel/feed_ratio;
+             }
+        }
+        float feed_rate= hypot(homing_axis[X_AXIS].fast_rate,homing_axis[Y_AXIS].fast_rate);
+        float delta[3] {feed_X_distance, feed_Y_distance, 0}; 
         if(homing_axis[X_AXIS].home_direction) delta[X_AXIS]= -delta[X_AXIS];
         if(homing_axis[Y_AXIS].home_direction) delta[Y_AXIS]= -delta[Y_AXIS];
-        float feed_rate = std::min(homing_axis[X_AXIS].fast_rate, homing_axis[Y_AXIS].fast_rate);
         THEROBOT->delta_move(delta, feed_rate, 3);
 
     } else if(axis_to_home[X_AXIS]) {
@@ -756,15 +778,20 @@ void Endstops::home(axis_bitmap_t a)
     for (size_t i = 0; i < homing_axis.size(); ++i) delta[i]= 0;
 
     // use minimum feed rate of all axes that are being homed (sub optimal, but necessary)
-    float feed_rate= homing_axis[X_AXIS].slow_rate;
+    
+    float feed_time= 0;
+    float feed_distance= 0;
+    // find slowest time for move taking into accound distance to move of all three axes and use that amount of time for movement
     for (auto& i : homing_axis) {
         int c= i.axis_index;
         if(axis_to_home[c]) {
             delta[c]= i.retract;
             if(!i.home_direction) delta[c]= -delta[c];
-            feed_rate= std::min(i.slow_rate, feed_rate);
+            feed_time= max(i.retract/i.slow_rate,feed_time);
+            feed_distance= hypot(i.retract,feed_distance);
         }
     }
+    float feed_rate=feed_distance/feed_time;
 
     THEROBOT->delta_move(delta, feed_rate, homing_axis.size());
     // wait until finished
