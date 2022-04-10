@@ -164,6 +164,7 @@ uint32_t ZProbe::read_probe(uint32_t dummy)
                 for(auto &a : THEROBOT->actuators) a->stop_moving();
                 probe_detected= true;
                 debounce= 0;
+                THEKERNEL->immediate_halt();
             }
 
         } else {
@@ -203,6 +204,9 @@ bool ZProbe::run_probe(float& mm, float feedrate, float max_dist, bool reverse)
 
     // wait until finished
     THECONVEYOR->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
     if(THEKERNEL->is_halted()) return false;
 
     // now see how far we moved, get delta in z we moved
@@ -328,8 +332,8 @@ void ZProbe::on_gcode_received(void *argument)
 
     } else if(gcode->has_g && gcode->g == 38 ) { // G38.2 Straight Probe with error, G38.3 straight probe without error
         // linuxcnc/grbl style probe http://www.linuxcnc.org/docs/2.5/html/gcode/gcode.html#sec:G38-probe
-        if(gcode->subcode < 2 || gcode->subcode > 5) {
-            gcode->stream->printf("error:Only G38.2 to G38.5 are supported\n");
+        if(gcode->subcode < 2 || gcode->subcode > 9) {
+            gcode->stream->printf("error:G38.%d Not supported, Only G38.2 to G38.9 are supported\n",gcode->subcode);
             return;
         }
 
@@ -339,7 +343,7 @@ void ZProbe::on_gcode_received(void *argument)
             return;
         }
 
-        if(gcode->subcode == 4 || gcode->subcode == 5) {
+        if(gcode->subcode == 4 || gcode->subcode == 5 || gcode->subcode == 8 || gcode->subcode == 9) {
             // we need to invert the probe sense (Note it may already be overrided)
             invert_override= !invert_override;
             pin.set_inverting(pin.is_inverting() != invert_override); // XOR so inverted pin is not inverted and vice versa
@@ -347,7 +351,7 @@ void ZProbe::on_gcode_received(void *argument)
 
         probe_XYZ(gcode);
 
-        if(gcode->subcode == 4 || gcode->subcode == 5) {
+        if(gcode->subcode == 4 || gcode->subcode == 5 || gcode->subcode == 8 || gcode->subcode == 9) {
             // restore probe sense invert
             pin.set_inverting(pin.is_inverting() != invert_override); // XOR so inverted pin is not inverted and vice versa
             invert_override= !invert_override;
@@ -424,21 +428,37 @@ void ZProbe::on_gcode_received(void *argument)
 void ZProbe::probe_XYZ(Gcode *gcode)
 {
     float x= 0, y= 0, z= 0;
-    if(gcode->has_letter('X')) {
-        x= THEROBOT->to_millimeters(gcode->get_value('X'));
-    }
+    float i= NAN, j= NAN;
+    if(gcode->subcode >= 6) {
+        if(gcode->has_letter('I')) {
+            i=  THEROBOT->to_millimeters(gcode->get_value('I'));
+        }
+  
+        if(gcode->has_letter('J')) {
+            j=  THEROBOT->to_millimeters(gcode->get_value('J'));
+        }
 
-    if(gcode->has_letter('Y')) {
-        y= THEROBOT->to_millimeters(gcode->get_value('Y'));
-    }
+        if(isnan(i) || isnan(j)) {
+            gcode->stream->printf("error: both I and J must be specified\n");
+            return;
+        }
+    } else {
+        if(gcode->has_letter('X')) {
+            x= THEROBOT->to_millimeters(gcode->get_value('X'));
+        }
 
-    if(gcode->has_letter('Z')) {
-        z= THEROBOT->to_millimeters(gcode->get_value('Z'));
-    }
+        if(gcode->has_letter('Y')) {
+            y= THEROBOT->to_millimeters(gcode->get_value('Y'));
+        }
 
-    if(x == 0 && y == 0 && z == 0) {
-        gcode->stream->printf("error:at least one of X Y or Z must be specified, and be > or < 0\n");
-        return;
+        if(gcode->has_letter('Z')) {
+            z= THEROBOT->to_millimeters(gcode->get_value('Z'));
+        }
+
+        if(x == 0 && y == 0 && z == 0) {
+            gcode->stream->printf("error:at least one of X Y or Z must be specified, and be > or < 0\n");
+            return;
+        }
     }
 
     // get probe feedrate in mm/min and convert to mm/sec if specified
@@ -456,16 +476,27 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     probing= true;
     probe_detected= false;
     debounce= 0;
-
-    // do a delta move which will stop as soon as the probe is triggered, or the distance is reached
-    float delta[3]= {x, y, z};
-    if(!THEROBOT->delta_move(delta, rate, 3)) {
-        gcode->stream->printf("error:No move detected or too small\n");
-        probing= false;
-        return;
+    
+    if (gcode->subcode == 6 || gcode->subcode == 8) {
+        // do a full clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
+        coordinated_circle(i, j, rate, true);
+    } else if (gcode->subcode == 7 || gcode->subcode == 9) {
+        // do a full counter clockwise circle which will stop as soon as the probe is triggered, or the start point is reached
+        coordinated_circle(i, j, rate, false);
+    } else {
+        // do a delta move which will stop as soon as the probe is triggered, or the distance is reached
+        float delta[3]= {x, y, z};
+        if(!THEROBOT->delta_move(delta, rate, 3)) {
+            gcode->stream->printf("error:No move detected or too small\n");
+            probing= false;
+            return;
+        }
     }
 
     THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
 
     // disable probe checking
     probing= false;
@@ -531,6 +562,44 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
+    THEROBOT->pop_state();
+}
+
+void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
+{
+    #define CMDLEN 128
+    char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
+
+    if (cw) {
+        strcpy(cmd, "G02 ");
+    } else {
+        strcpy(cmd, "G03 ");
+    }
+    size_t n= strlen(cmd);
+    snprintf(&cmd[n], CMDLEN-n, "X0 Y0 Z0 I%1.3f J%1.3f F%1.1f ", i, j, feedrate * 60);
+
+    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+
+    // send as a command line as may have multiple G codes in it
+    THEROBOT->push_state();
+    THEROBOT->absolute_mode = false; //turn off absolute_mode.  No need to restore it as the pop_state will do that
+    THEROBOT->inch_mode = false; //turn off inch_mode.  No need to restore it as the pop_state will do that
+    probing= true;
+    probe_detected= false;
+    debounce= 0;
+    struct SerialMessage message;
+    message.message = cmd;
+    delete [] cmd;
+
+    message.stream = &(StreamOutput::NullStream);
+    THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
+    THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
     THEROBOT->pop_state();
 }
 
