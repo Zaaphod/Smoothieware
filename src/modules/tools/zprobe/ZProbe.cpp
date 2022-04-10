@@ -164,6 +164,7 @@ uint32_t ZProbe::read_probe(uint32_t dummy)
                 for(auto &a : THEROBOT->actuators) a->stop_moving();
                 probe_detected= true;
                 debounce= 0;
+                THEKERNEL->immediate_halt();
             }
 
         } else {
@@ -203,6 +204,9 @@ bool ZProbe::run_probe(float& mm, float feedrate, float max_dist, bool reverse)
 
     // wait until finished
     THECONVEYOR->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
     if(THEKERNEL->is_halted()) return false;
 
     // now see how far we moved, get delta in z we moved
@@ -490,6 +494,9 @@ void ZProbe::probe_XYZ(Gcode *gcode)
     }
 
     THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
 
     // disable probe checking
     probing= false;
@@ -555,6 +562,9 @@ void ZProbe::coordinated_move(float x, float y, float z, float feedrate, bool re
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
     THEROBOT->pop_state();
 }
 
@@ -562,21 +572,24 @@ void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
 {
     #define CMDLEN 128
     char *cmd= new char[CMDLEN]; // use heap here to reduce stack usage
-    strcpy(cmd, "G91 "); //Always use relative for a full circle from current location
-    size_t n= strlen(cmd);
+
     if (cw) {
-        snprintf(&cmd[n], CMDLEN-n, "G02 ");
+        strcpy(cmd, "G02 ");
     } else {
-        snprintf(&cmd[n], CMDLEN-n, "G03 ");
+        strcpy(cmd, "G03 ");
     }
-    n= strlen(cmd);
+    size_t n= strlen(cmd);
     snprintf(&cmd[n], CMDLEN-n, "X0 Y0 Z0 I%1.3f J%1.3f F%1.1f ", i, j, feedrate * 60);
 
-    //THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
+    THEKERNEL->streams->printf("DEBUG: move: %s: %u\n", cmd, strlen(cmd));
 
     // send as a command line as may have multiple G codes in it
     THEROBOT->push_state();
+    THEROBOT->absolute_mode = false; //turn off absolute_mode.  No need to restore it as the pop_state will do that
     THEROBOT->inch_mode = false; //turn off inch_mode.  No need to restore it as the pop_state will do that
+    probing= true;
+    probe_detected= false;
+    debounce= 0;
     struct SerialMessage message;
     message.message = cmd;
     delete [] cmd;
@@ -584,8 +597,10 @@ void ZProbe::coordinated_circle(float i, float j, float feedrate, bool cw)
     message.stream = &(StreamOutput::NullStream);
     THEKERNEL->call_event(ON_CONSOLE_LINE_RECEIVED, &message );
     THEKERNEL->conveyor->wait_for_idle();
+    if (probe_detected) {
+        THEKERNEL->call_event(ON_HALT, (void *)1); // clears on_halt
+    }
     THEROBOT->pop_state();
-
 }
 
 // issue home command
